@@ -1,0 +1,25 @@
+# 1. Alapból tiltsunk le MINDENT a projektben
+*
+!*/
+
+# 2. Engedélyezzük a gyökérben lévő konfigurációs fájlokat
+!build.gradle.kts
+!settings.gradle.kts
+!gradle.properties
+!.gitignore
+
+# 3. Engedélyezzük az 'app' mappa belső beállításait
+!app/
+app/*
+!app/build.gradle.kts
+
+# 4. Engedélyezzük a forráskódot (src) és a Manifestet, de a 'build' mappát SOHA
+app/build/
+!app/src/
+!app/src/main/
+!app/src/main/AndroidManifest.xml
+
+# 5. Engedélyezzük a teljes Java/Kotlin mappa struktúrát a te fájljaiddal
+!app/src/main/java/
+!app/src/main/java/**
+!app/src/main/java/**/*.kt
