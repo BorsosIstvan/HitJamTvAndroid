@@ -7,6 +7,7 @@
 !settings.gradle.kts
 !gradle.properties
 !.gitignore
+!README.md
 
 # 3. Engedélyezzük az 'app' mappa belső beállításait
 !app/
