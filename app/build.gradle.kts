@@ -52,5 +52,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.0")
     implementation("androidx.media3:media3-ui:1.4.0")
+
+    // Google GSON voor het online inladen en verwerken van de stations.json list
+    implementation("com.google.code.gson:gson:2.10.1")
 }
 

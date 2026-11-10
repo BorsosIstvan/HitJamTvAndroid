@@ -3,6 +3,7 @@ package com.borsosistvan.hitjamtv
 import android.os.Bundle
 import android.graphics.Color
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,11 +20,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var exoPlayer: ExoPlayer
     private lateinit var playerView: PlayerView
     private lateinit var statusTextView: TextView
+    private lateinit var buttonRow: LinearLayout
+    
+    private var isFullScreen = false
+    private var currentFocusedUrl = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. ExoPlayer videomotor initialiseren
+        // 1. Videomotor initialiseren
         exoPlayer = ExoPlayer.Builder(this).build()
 
         // Hoofdindeling (Verticaal)
@@ -47,20 +52,20 @@ class MainActivity : ComponentActivity() {
         }
         mainLayout.addView(statusTextView)
 
-        // 2. Videovenster (PlayerView) aanmaken in 16:9 verhouding
+        // 2. Videovenster (PlayerView) in 16:9 verhouding
         playerView = PlayerView(this).apply {
             player = exoPlayer
-            useController = true // Toont play/pause knoppen op tv
+            useController = false // Geen balken zichtbaar tijdens het zappen in de lijst
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
-                1f // Vult alle beschikbare ruimte boven de knoppen op
+                1f // Vult de ruimte boven de knoppen op
             )
         }
         mainLayout.addView(playerView)
 
         // Horizontale rij voor de 3 tv-knoppen
-        val buttonRow = LinearLayout(this).apply {
+        buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
@@ -71,7 +76,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // De live .m3u8 streams voor M1, M2 en M5 via ConnectMedia omleidingen
+        // De streams voor M1, M2 en M5 via ConnectMedia omleidingen
         val channels = listOf(
             Pair("M1", "https://c201-node61-cdn.connectmedia.hu/110301/e475b5226d338c8b2eb3b9d0e6bdd778/6af3619f/index.m3u8"),
             Pair("M2", "https://c402-node62-cdn.connectmedia.hu/110302/10cdfae4bad5ae9225e08db12b9f6a56/6af361ef/index.m3u8"),
@@ -88,12 +93,30 @@ class MainActivity : ComponentActivity() {
                     setMargins(15, 0, 15, 0)
                 }
 
-                // Schakelen tussen zenders via de Enter-knop van de afstandsbediening
+                // Luisteren naar de afstandsbediening focus (Gecorrigeerd naar hasFocus)
+                setOnFocusChangeListener { _, hasFocus ->
+                    if (hasFocus) {
+                        // Oranje neon-stijl wanneer geselecteerd met afstandsbediening
+                        setBackgroundColor(Color.parseColor("#FF4500"))
+                        setTextColor(Color.WHITE)
+                        
+                        // Start de live stream preview direct zodra je op de knop gaat staan
+                        if (currentFocusedUrl != channel.second) {
+                            currentFocusedUrl = channel.second
+                            playStream(channel.second, channel.first)
+                        }
+                    } else {
+                        // Normale grijze knop als de afstandsbediening er weer vanaf gaat
+                        setBackgroundColor(Color.parseColor("#1E1E1E"))
+                        setTextColor(Color.GRAY)
+                    }
+                }
+
+                // Wanneer je op Enter drukt gaat de video naar Full-screen
                 setOnClickListener {
-                    playStream(channel.second, channel.first)
+                    toggleFullScreen(true)
                 }
                 
-                // M1 automatisch selecteren bij het starten van de app
                 if (index == 0) {
                     requestFocus()
                 }
@@ -103,21 +126,55 @@ class MainActivity : ComponentActivity() {
 
         mainLayout.addView(buttonRow)
         setContentView(mainLayout)
-
-        // Start direct M1 op bij het openen van de app
-        playStream(channels[0].second, channels[0].first)
     }
 
-    // Functie om de live stream in te laden en af te spelen
     private fun playStream(url: String, channelName: String) {
-        statusTextView.text = "Élő adás: $channelName"
+        statusTextView.text = "Élő előnézet: $channelName"
         val mediaItem = MediaItem.fromUri(url)
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
         exoPlayer.play()
     }
 
-    // Geheugen netjes vrijmaken als de app sluit (Gecorrigeerd naar super.onDestroy)
+    // Wisselen tussen volledig scherm en mini-lijst modus
+    private fun toggleFullScreen(goFullscreen: Boolean) {
+        isFullScreen = goFullscreen
+        if (goFullscreen) {
+            statusTextView.visibility = View.GONE
+            buttonRow.visibility = View.GONE
+            
+            playerView.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            playerView.useController = true // Toon play/pause balken op volledig scherm
+        } else {
+            statusTextView.visibility = View.VISIBLE
+            buttonRow.visibility = View.VISIBLE
+            
+            playerView.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            playerView.useController = false
+            
+            // Zet de afstandsbediening focus direct terug op de zenderlijst
+            buttonRow.getChildAt(0).requestFocus()
+        }
+    }
+
+    // Luisteren naar de 'Terug' (Back) knop van de tv-afstandsbediening
+    override fun onBackPressed() {
+        if (isFullScreen) {
+            // Als de video groot is, brengt de Terug-knop je weer naar de zenderlijst
+            toggleFullScreen(false)
+        } else {
+            // Als je al in de lijst stond, sluit de app netjes af
+            super.onBackPressed()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         exoPlayer.release()
