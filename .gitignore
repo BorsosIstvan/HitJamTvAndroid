@@ -24,3 +24,4 @@ app/build/
 !app/src/main/java/
 !app/src/main/java/**
 !app/src/main/java/**/*.kt
+!app/src/main/java/com/borsosistvan/**/*.kt
