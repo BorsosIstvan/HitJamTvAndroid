@@ -35,14 +35,14 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    //implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-    implementation("androidx.activity:activity-compose:1.8.1")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.activity:activity-compose:1.9.3")
     
-    // KÖTELEZŐ: Jetpack Compose alapvető UI és Material 3 könyvtárak
-    //implementation("androidx.compose.ui:ui:1.6.1")
-    //implementation("androidx.compose.material3:material3:1.2.0") // Ezt hiányolta a compiler!
-    //implementation("androidx.compose.ui:ui-tooling-preview:1.6.1")
+    // Jetpack Compose alapok és Material 3 dizájn
+    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.foundation:foundation")
     
     // Officiële stabiele Jetpack Compose TV componenten van Google
     //implementation("androidx.tv:tv-foundation:1.0.0")
@@ -54,6 +54,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.0")
 
     // Google GSON voor het online inladen en verwerken van de stations.json list
-    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("com.google.code.gson:gson:2.11.0")
 }
 

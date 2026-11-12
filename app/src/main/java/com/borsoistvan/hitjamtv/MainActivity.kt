@@ -1,182 +1,237 @@
 package com.borsosistvan.hitjamtv
 
 import android.os.Bundle
-import android.graphics.Color
-import android.view.Gravity
-import android.view.View
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
 import androidx.annotation.OptIn
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
-@OptIn(UnstableApi::class)
 class MainActivity : ComponentActivity() {
-    
-    private lateinit var exoPlayer: ExoPlayer
-    private lateinit var playerView: PlayerView
-    private lateinit var statusTextView: TextView
-    private lateinit var buttonRow: LinearLayout
-    
-    private var isFullScreen = false
-    private var currentFocusedUrl = ""
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // 1. Videomotor initialiseren
-        exoPlayer = ExoPlayer.Builder(this).build()
-
-        // Hoofdindeling (Verticaal)
-        val mainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#121212"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        // Status tekst bovenin
-        statusTextView = TextView(this).apply {
-            text = "HitJam TV - Válassz csatornát!"
-            setTextColor(Color.parseColor("#FF4500"))
-            textSize = 24f
-            gravity = Gravity.CENTER
-            setPadding(0, 20, 0, 20)
-        }
-        mainLayout.addView(statusTextView)
-
-        // 2. Videovenster (PlayerView) in 16:9 verhouding
-        playerView = PlayerView(this).apply {
-            player = exoPlayer
-            useController = false // Geen balken zichtbaar tijdens het zappen in de lijst
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f // Vult de ruimte boven de knoppen op
-            )
-        }
-        mainLayout.addView(playerView)
-
-        // Horizontale rij voor de 3 tv-knoppen
-        buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(20, 30, 20, 30)
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                HitJamTvApp()
             }
         }
+    }
+}
 
-        // De streams voor M1, M2 en M5 via ConnectMedia omleidingen
-        val channels = listOf(
-            Pair("M1", "https://c201-node61-cdn.connectmedia.hu/110301/e475b5226d338c8b2eb3b9d0e6bdd778/6af3619f/index.m3u8"),
-            Pair("M2", "https://c402-node62-cdn.connectmedia.hu/110302/10cdfae4bad5ae9225e08db12b9f6a56/6af361ef/index.m3u8"),
-            Pair("M5", "https://c402-node61-cdn.connectmedia.hu/110305/baab752ce1dabe13b3bc0fb9f2ad5ce1/6af3623d/index.m3u8")
-        )
+@OptIn(UnstableApi::class)
+@Composable
+fun HitJamTvApp() {
+    val context = LocalContext.current
 
-        channels.forEachIndexed { index, channel ->
-            val channelButton = Button(this).apply {
-                text = channel.first
-                textSize = 20f
-                isFocusable = true
-                
-                layoutParams = LinearLayout.LayoutParams(0, 150, 1f).apply {
-                    setMargins(15, 0, 15, 0)
-                }
+    // Alapból a Station.kt-ben lévő tartalék listával indulunk, így sosem üres a képernyő
+    var stations by remember { mutableStateOf(DefaultStations.list) }
+    var activeStation by remember { mutableStateOf(stations.first()) }
+    var isFullScreen by remember { mutableStateOf(false) }
+    var dataSourceText by remember { mutableStateOf("Helyi lista") }
 
-                // Luisteren naar de afstandsbediening focus (Gecorrigeerd naar hasFocus)
-                setOnFocusChangeListener { _, hasFocus ->
-                    if (hasFocus) {
-                        // Oranje neon-stijl wanneer geselecteerd met afstandsbediening
-                        setBackgroundColor(Color.parseColor("#FF4500"))
-                        setTextColor(Color.WHITE)
-                        
-                        // Start de live stream preview direct zodra je op de knop gaat staan
-                        if (currentFocusedUrl != channel.second) {
-                            currentFocusedUrl = channel.second
-                            playStream(channel.second, channel.first)
+    // Háttérben megpróbáljuk letölteni a friss listát a GitHubról
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                // IDE ÍRD A SAJÁT GITHUB PAGES JSON LINKEDET!
+                val url = URL("https://borsosistvan.github.io/hitjam-tv-app/stations.json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.connectTimeout = 4000
+                connection.readTimeout = 4000
+
+                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    val jsonText = connection.inputStream.bufferedReader().use { it.readText() }
+                    val listType = object : TypeToken<List<Station>>() {}.type
+                    val onlineStations: List<Station> = Gson().fromJson(jsonText, listType)
+
+                    if (onlineStations.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            stations = onlineStations
+                            activeStation = onlineStations.first()
+                            dataSourceText = "Online lista (GitHub)"
                         }
-                    } else {
-                        // Normale grijze knop als de afstandsbediening er weer vanaf gaat
-                        setBackgroundColor(Color.parseColor("#1E1E1E"))
-                        setTextColor(Color.GRAY)
                     }
                 }
-
-                // Wanneer je op Enter drukt gaat de video naar Full-screen
-                setOnClickListener {
-                    toggleFullScreen(true)
-                }
-                
-                if (index == 0) {
-                    requestFocus()
-                }
+            } catch (e: Exception) {
+                // Ha nincs net vagy hibás a link, csendben marad a DefaultStations.list!
+                e.printStackTrace()
             }
-            buttonRow.addView(channelButton)
         }
-
-        mainLayout.addView(buttonRow)
-        setContentView(mainLayout)
     }
 
-    private fun playStream(url: String, channelName: String) {
-        statusTextView.text = "Élő előnézet: $channelName"
-        val mediaItem = MediaItem.fromUri(url)
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build()
+    }
+
+    LaunchedEffect(activeStation) {
+        val mediaItem = MediaItem.fromUri(activeStation.payload)
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
-        exoPlayer.play()
+        exoPlayer.playWhenReady = true
     }
 
-    // Wisselen tussen volledig scherm en mini-lijst modus
-    private fun toggleFullScreen(goFullscreen: Boolean) {
-        isFullScreen = goFullscreen
-        if (goFullscreen) {
-            statusTextView.visibility = View.GONE
-            buttonRow.visibility = View.GONE
-            
-            playerView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
-            playerView.useController = true // Toon play/pause balken op volledig scherm
-        } else {
-            statusTextView.visibility = View.VISIBLE
-            buttonRow.visibility = View.VISIBLE
-            
-            playerView.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-            playerView.useController = false
-            
-            // Zet de afstandsbediening focus direct terug op de zenderlijst
-            buttonRow.getChildAt(0).requestFocus()
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
         }
     }
 
-    // Luisteren naar de 'Terug' (Back) knop van de tv-afstandsbediening
-    override fun onBackPressed() {
-        if (isFullScreen) {
-            // Als de video groot is, brengt de Terug-knop je weer naar de zenderlijst
-            toggleFullScreen(false)
-        } else {
-            // Als je al in de lijst stond, sluit de app netjes af
-            super.onBackPressed()
-        }
+    BackHandler(enabled = isFullScreen) {
+        isFullScreen = false
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        exoPlayer.release()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (isFullScreen) Color.Black else Color(0xFF121212))
+            .padding(if (isFullScreen) 0.dp else 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (!isFullScreen) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Élő adás: ${activeStation.name}",
+                    color = Color(0xFFFF4500),
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = dataSourceText,
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        Box(
+            modifier = if (isFullScreen) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier
+                    .weight(1f)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black)
+            }
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = false
+                    }
+                },
+                update = { playerView ->
+                    playerView.useController = isFullScreen
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        if (!isFullScreen) {
+            Spacer(modifier = Modifier.height(24.dp))
+
+            val firstButtonFocus = remember { FocusRequester() }
+            LaunchedEffect(stations) {
+                delay(200)
+                try {
+                    firstButtonFocus.requestFocus()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            // LazyRow: Vízszintesen görgethető gombsor, így akár 50 csatorna is elfér!
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                itemsIndexed(stations) { index, station ->
+                    var isFocused by remember { mutableStateOf(false) }
+
+                    Box(
+                        modifier = Modifier
+                            .width(220.dp) // Fix szélesség a görgethetőség miatt
+                            .height(100.dp)
+                            .then(if (index == 0) Modifier.focusRequester(firstButtonFocus) else Modifier)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (isFocused) Color(0xFFFF4500) else Color(0xFF1E1E1E))
+                            .border(
+                                BorderStroke(3.dp, if (isFocused) Color(0xFFFF8C00) else Color(0xFF333333)),
+                                RoundedCornerShape(20.dp)
+                            )
+                            .onFocusChanged { focusState ->
+                                isFocused = focusState.isFocused
+                                if (focusState.isFocused) {
+                                    activeStation = station
+                                }
+                            }
+                            .focusable()
+                            .clickable {
+                                activeStation = station
+                                isFullScreen = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "${station.logo} ${station.name}",
+                                color = if (isFocused) Color.White else Color.Gray,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = station.genre,
+                                color = if (isFocused) Color.White.copy(alpha = 0.8f) else Color.DarkGray,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
